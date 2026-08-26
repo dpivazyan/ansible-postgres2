@@ -1,12 +1,48 @@
 ---
 # Top-level playbook — this is the file AWX's Job Template points to.
-# All the real logic lives in roles/postgres_server; this file just
-# wires the target host(s) + role together.
+#
+# Design: the target VM's IP arrives as an extra_var (target_ip) on every
+# request — it's never a persisted AWX Host object. Play 1 runs locally
+# and uses add_host to construct the target in-memory for this run only;
+# Play 2 then runs the role against it. This means:
+#   - No API calls needed to create/update AWX inventory before launching.
+#   - Fully stateless from AWX's inventory perspective — nothing to clean up.
+#   - The Job Template's Inventory can just be a minimal one containing
+#     "localhost" (AWX ships one by default).
+#
+# AWX's Machine Credential (SSH key, become password if any) is injected
+# at the job level regardless of which hosts exist in inventory, so it
+# still applies correctly to the dynamically-added host in Play 2.
+
+- name: Register the dynamic target for this run
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Fail fast if target_ip wasn't supplied
+      ansible.builtin.assert:
+        that:
+          - target_ip is defined
+          - target_ip | length > 0
+        fail_msg: >-
+          'target_ip' extra_var is required — this is the IP of the VM
+          to deploy PostgreSQL onto. Pass it via the AWX Survey or
+          extra_vars on launch.
+
+    - name: Add the target VM into an in-memory inventory group
+      ansible.builtin.add_host:
+        name: "{{ target_ip }}"
+        groups: pg_targets
+        ansible_host: "{{ target_ip }}"
+        # ansible_user defaults to whatever the AWX Machine Credential
+        # specifies; only set here if you need a per-request override.
 
 - name: Deploy and configure PostgreSQL
-  hosts: all
-  become: true          # most tasks need root (package install, disk mount, etc.)
-  gather_facts: true    # role uses ansible_distribution / ansible_os_family
+  hosts: pg_targets
+  become: true
+  gather_facts: true
 
   roles:
     - postgres_server
+
