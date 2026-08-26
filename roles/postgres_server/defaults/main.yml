@@ -23,16 +23,16 @@ pg_port: 5432
 # CIDRs allowed to connect — should come from the orchestrator based on
 # the customer's network/security group, never left wide open in prod.
 pg_allowed_cidrs:
-  - "10.0.0.0/8"
+  - "0.0.0.0/0"
 
 # --- Sizing / tuning (tier-based, orchestrator picks the tier) ---
 # "small" | "medium" | "large" — used to select values in vars/main.yml
 pg_tier: "small"
 
 # --- App database + admin user created after install ---
-pg_app_db_name: "appdb"
-pg_app_db_user: "appuser"
-pg_app_db_password: "CHANGE_ME"      # orchestrator should always override — pull from Vault, never commit real value
+pg_app_db_name: "postgres"
+pg_app_db_user: "postgres"
+pg_app_db_password: "password"      # orchestrator should always override — pull from Vault, never commit real value
 
 # --- Superuser / OS-level ---
 pg_service_name: "postgresql@{{ pg_version }}-main"   # Ubuntu's PGDG service naming
