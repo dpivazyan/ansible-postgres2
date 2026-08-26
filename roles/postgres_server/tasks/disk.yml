@@ -1,0 +1,89 @@
+---
+# This step only touches disk/filesystem/PGDATA location — no postgresql.conf
+# editing happens here (that's Step 3). Keeping "where data lives" separate
+# from "how postgres is tuned" means either can change without touching the other.
+#
+# Two paths:
+#   pg_use_separate_data_disk: true  -> format + mount the attached data disk,
+#                                        move PGDATA there
+#   pg_use_separate_data_disk: false -> leave PGDATA on the root disk as PGDG's
+#                                        package default (only meant for small/test tiers)
+
+- name: (Separate disk) Create filesystem on the data disk
+  community.general.filesystem:
+    fstype: "{{ pg_data_fs_type }}"
+    dev: "{{ pg_data_disk_device }}"
+  when: pg_use_separate_data_disk
+
+- name: (Separate disk) Ensure data mount point directory exists
+  ansible.builtin.file:
+    path: "{{ pg_data_mount_point }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+  when: pg_use_separate_data_disk
+
+- name: (Separate disk) Mount the data disk persistently
+  ansible.posix.mount:
+    path: "{{ pg_data_mount_point }}"
+    src: "{{ pg_data_disk_device }}"
+    fstype: "{{ pg_data_fs_type }}"
+    state: mounted     # mounts now AND writes /etc/fstab so it survives reboot
+  when: pg_use_separate_data_disk
+
+- name: (Separate disk) Stop PostgreSQL before moving PGDATA
+  ansible.builtin.systemd:
+    name: "{{ pg_service_name }}"
+    state: stopped
+  when: pg_use_separate_data_disk
+
+- name: (Separate disk) Check if data has already been migrated (idempotency guard)
+  ansible.builtin.stat:
+    path: "{{ pg_data_mount_point }}/PG_VERSION"
+  register: pg_data_already_migrated
+  when: pg_use_separate_data_disk
+
+# rsync preserves permissions/ownership exactly, unlike a plain cp -r,
+# which matters a lot for postgres's strict directory permission checks.
+- name: (Separate disk) Copy existing PGDATA to new mount point
+  ansible.builtin.command:
+    cmd: >-
+      rsync -a --delete
+      /var/lib/postgresql/{{ pg_version }}/main/
+      {{ pg_data_mount_point }}/
+  when:
+    - pg_use_separate_data_disk
+    - not pg_data_already_migrated.stat.exists
+
+- name: (Separate disk) Point PostgreSQL's cluster config at the new data directory
+  ansible.builtin.lineinfile:
+    path: "/etc/postgresql/{{ pg_version }}/main/postgresql.conf"
+    regexp: "^#?data_directory\\s*="
+    line: "data_directory = '{{ pg_data_mount_point }}'"
+  when: pg_use_separate_data_disk
+
+# Ubuntu's postgresql package uses AppArmor, which restricts which paths
+# the postgres process may read/write — without this, postgres will fail
+# to start against any data_directory outside the default location.
+- name: (Separate disk) Allow AppArmor access to the new data directory
+  ansible.builtin.blockinfile:
+    path: /etc/apparmor.d/local/usr.sbin.postgres
+    create: true
+    block: |
+      {{ pg_data_mount_point }}/ r,
+      {{ pg_data_mount_point }}/** rwk,
+  when: pg_use_separate_data_disk
+  notify: reload apparmor
+
+- name: (Separate disk) Start PostgreSQL against the new data directory
+  ansible.builtin.systemd:
+    name: "{{ pg_service_name }}"
+    state: started
+  when: pg_use_separate_data_disk
+
+- name: (Root disk fallback) Confirm PostgreSQL is running on default data directory
+  ansible.builtin.systemd:
+    name: "{{ pg_service_name }}"
+    state: started
+  when: not pg_use_separate_data_disk

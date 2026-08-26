@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+# Managed by the postgres_server Ansible role — do not edit by hand.
+#
+# TYPE  DATABASE  USER  ADDRESS  METHOD
+
+# Local Unix socket connections (used by the postgres OS user itself,
+# e.g. maintenance/backup tooling running on the box)
+local   all             postgres                                peer
+local   all             all                                     peer
+
+# Loopback
+host    all             all             127.0.0.1/32            scram-sha-256
+host    all             all             ::1/128                 scram-sha-256
+
+# Customer / application access — one line per allowed CIDR.
+# pg_allowed_cidrs is supplied by the orchestrator per deployment,
+# should reflect the customer's actual network/security group,
+# never left as 0.0.0.0/0 in production.
+{% for cidr in pg_allowed_cidrs %}
+host    {{ pg_app_db_name }}    {{ pg_app_db_user }}    {{ cidr }}    scram-sha-256
+{% endfor %}

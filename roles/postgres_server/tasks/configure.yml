@@ -1,0 +1,34 @@
+---
+# Config templating only — no disk logic (Step 2) or database/user
+# creation (Step 4) happens here. Deliberately narrow scope.
+
+- name: Set password encryption method to scram-sha-256 (must be set before any passwords are created)
+  ansible.builtin.lineinfile:
+    path: "/etc/postgresql/{{ pg_version }}/main/postgresql.conf"
+    regexp: "^#?password_encryption\\s*="
+    line: "password_encryption = scram-sha-256"
+  notify: restart postgresql
+
+- name: Drop our tuning overrides into postgresql's conf.d include directory
+  ansible.builtin.template:
+    src: pg_dbaas_overrides.conf.j2
+    dest: "/etc/postgresql/{{ pg_version }}/main/conf.d/dbaas_overrides.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  notify: restart postgresql
+  # Note: Ubuntu's PGDG package auto-includes conf.d/*.conf from the
+  # main postgresql.conf — no extra "include_dir" line needed, it's
+  # already there by default on Debian/Ubuntu packaging.
+
+- name: Template pg_hba.conf (controls who can connect and how)
+  ansible.builtin.template:
+    src: pg_hba.conf.j2
+    dest: "/etc/postgresql/{{ pg_version }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: "0640"
+  notify: reload postgresql
+  # pg_hba changes only need a reload, not a full restart — reload is
+  # non-disruptive to existing connections, worth keeping separate
+  # from the restart handler above for that reason.

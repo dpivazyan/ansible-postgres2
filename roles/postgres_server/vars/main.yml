@@ -1,0 +1,22 @@
+---
+# Internal lookup table for postgresql.conf tuning, keyed by pg_tier.
+# The template (templates/postgresql.conf.j2) will reference
+# pg_tuning[pg_tier] rather than raw variables, so adding a new tier
+# later just means adding one more entry here.
+
+pg_tuning:
+  small:
+    shared_buffers: "256MB"
+    max_connections: 50
+    effective_cache_size: "768MB"
+    work_mem: "4MB"
+  medium:
+    shared_buffers: "1GB"
+    max_connections: 100
+    effective_cache_size: "3GB"
+    work_mem: "8MB"
+  large:
+    shared_buffers: "4GB"
+    max_connections: 200
+    effective_cache_size: "12GB"
+    work_mem: "16MB"

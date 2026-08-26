@@ -1,0 +1,38 @@
+---
+# ============================================================
+# These are the variables the orchestrator / AWX Survey must
+# supply per deployment. Defaults here are just safe fallbacks
+# for manual testing — production calls should always pass
+# explicit extra_vars overriding these.
+# ============================================================
+
+# --- Core version ---
+pg_version: "16"                     # e.g. "14", "15", "16", "17"
+
+# --- Storage ---
+# Set true if CloudStack attached a separate data disk for this instance.
+# If false, PGDATA stays on the root disk (only fine for small/test tiers).
+pg_use_separate_data_disk: true
+pg_data_disk_device: "/dev/sdb"      # block device of the attached data volume
+pg_data_mount_point: "/var/lib/postgresql/data"
+pg_data_fs_type: "ext4"
+
+# --- Networking / access ---
+pg_listen_addresses: "*"
+pg_port: 5432
+# CIDRs allowed to connect — should come from the orchestrator based on
+# the customer's network/security group, never left wide open in prod.
+pg_allowed_cidrs:
+  - "10.0.0.0/8"
+
+# --- Sizing / tuning (tier-based, orchestrator picks the tier) ---
+# "small" | "medium" | "large" — used to select values in vars/main.yml
+pg_tier: "small"
+
+# --- App database + admin user created after install ---
+pg_app_db_name: "appdb"
+pg_app_db_user: "appuser"
+pg_app_db_password: "CHANGE_ME"      # orchestrator should always override — pull from Vault, never commit real value
+
+# --- Superuser / OS-level ---
+pg_service_name: "postgresql@{{ pg_version }}-main"   # Ubuntu's PGDG service naming

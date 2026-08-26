@@ -1,0 +1,55 @@
+---
+# Runs after Step 3, so scram-sha-256 is already the active encryption
+# method and the user created here gets a properly hashed password.
+#
+# These tasks connect as the OS 'postgres' user over the local Unix
+# socket (peer auth, see pg_hba.conf.j2) — no password needed for the
+# connection Ansible itself makes to run these.
+
+- name: Ensure application database exists
+  community.postgresql.postgresql_db:
+    name: "{{ pg_app_db_name }}"
+    encoding: UTF-8
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Ensure application user exists with the supplied password
+  community.postgresql.postgresql_user:
+    db: "{{ pg_app_db_name }}"
+    name: "{{ pg_app_db_user }}"
+    password: "{{ pg_app_db_password }}"
+    role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+    state: present
+  become: true
+  become_user: postgres
+  no_log: true   # keeps the password out of AWX job output/logs
+
+- name: Grant the app user full privileges on the app database
+  community.postgresql.postgresql_privs:
+    db: "{{ pg_app_db_name }}"
+    role: "{{ pg_app_db_user }}"
+    type: database
+    privs: ALL
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Grant privileges on the public schema (needed for CREATE TABLE etc. on PG15+)
+  community.postgresql.postgresql_privs:
+    db: "{{ pg_app_db_name }}"
+    role: "{{ pg_app_db_user }}"
+    type: schema
+    objs: public
+    privs: ALL
+    state: present
+  become: true
+  become_user: postgres
+
+- name: Report deployment summary
+  ansible.builtin.debug:
+    msg:
+      - "PostgreSQL {{ pg_version }} deployed successfully"
+      - "Listening on {{ pg_listen_addresses }}:{{ pg_port }}"
+      - "Database: {{ pg_app_db_name }}  |  User: {{ pg_app_db_user }}"
+      - "Data directory: {{ pg_data_mount_point if pg_use_separate_data_disk else '/var/lib/postgresql/' + pg_version + '/main (default)' }}"

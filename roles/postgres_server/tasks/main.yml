@@ -1,0 +1,25 @@
+---
+# Orchestrates the sub-task files in execution order.
+# Keeping main.yml as a pure "table of contents" makes it easy to see
+# the whole flow at a glance, and to comment out a step during testing
+# without digging through a huge task list.
+
+- name: Assert we're running on a supported OS
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Ubuntu"
+    fail_msg: "This role currently only supports Ubuntu. Got: {{ ansible_distribution }}"
+
+- name: STEP 1 — Add PGDG repo and install PostgreSQL package
+  ansible.builtin.import_tasks: repo_and_install.yml
+
+- name: STEP 2 — Prepare and mount data disk, relocate PGDATA
+  ansible.builtin.import_tasks: disk.yml
+
+# --- Steps below are stubs for now — filled in next ---
+
+- name: STEP 3 — Template postgresql.conf / pg_hba.conf
+  ansible.builtin.import_tasks: configure.yml
+
+- name: STEP 4 — Create app database, user, grants
+  ansible.builtin.import_tasks: users_db.yml

@@ -1,0 +1,12 @@
+---
+# Top-level playbook — this is the file AWX's Job Template points to.
+# All the real logic lives in roles/postgres_server; this file just
+# wires the target host(s) + role together.
+
+- name: Deploy and configure PostgreSQL
+  hosts: all
+  become: true          # most tasks need root (package install, disk mount, etc.)
+  gather_facts: true    # role uses ansible_distribution / ansible_os_family
+
+  roles:
+    - postgres_server

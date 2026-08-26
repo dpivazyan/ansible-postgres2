@@ -1,0 +1,48 @@
+---
+# Why not just `apt install postgresql`? Ubuntu's default repos ship
+# whatever version was current when that Ubuntu release was cut — you
+# can't reliably request "16" vs "17" that way, and it won't match
+# across Ubuntu 22.04 vs 24.04 targets. PGDG's repo publishes every
+# supported major version for every supported Ubuntu release, so
+# pg_version is always honored exactly regardless of the underlying
+# Ubuntu release.
+
+- name: Install prerequisite packages for adding a signed apt repo
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+
+- name: Download PGDG signing key
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /etc/apt/trusted.gpg.d/postgresql.asc
+    mode: "0644"
+
+- name: Add PGDG apt repository for this Ubuntu release
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/etc/apt/trusted.gpg.d/postgresql.asc]
+      https://apt.postgresql.org/pub/repos/apt
+      {{ ansible_distribution_release }}-pgdg main
+    state: present
+    filename: pgdg
+    update_cache: true
+
+- name: Install the requested PostgreSQL version
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ pg_version }}"
+      - "postgresql-client-{{ pg_version }}"
+      - "postgresql-contrib-{{ pg_version }}"
+      - python3-psycopg2   # required by community.postgresql modules to talk to postgres
+    state: present
+
+- name: Ensure PostgreSQL service is enabled and started
+  ansible.builtin.systemd:
+    name: "{{ pg_service_name }}"
+    enabled: true
+    state: started

@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+# Managed by the postgres_server Ansible role — do not edit by hand,
+# changes will be overwritten on the next deployment run.
+#
+# Design note: rather than replacing Ubuntu's whole default postgresql.conf,
+# this file is dropped into postgresql's conf.d/ include directory
+# (see configure.yml) so PGDG's own defaults for everything we don't
+# explicitly set here are preserved. Only the settings that matter for
+# a DBaaS deployment are listed below.
+
+listen_addresses = '{{ pg_listen_addresses }}'
+port = {{ pg_port }}
+
+# --- Tier-based tuning (see roles/postgres_server/vars/main.yml) ---
+shared_buffers = '{{ pg_tuning[pg_tier].shared_buffers }}'
+max_connections = {{ pg_tuning[pg_tier].max_connections }}
+effective_cache_size = '{{ pg_tuning[pg_tier].effective_cache_size }}'
+work_mem = '{{ pg_tuning[pg_tier].work_mem }}'
+
+# --- Sane defaults for a managed service ---
+logging_collector = on
+log_directory = 'log'
+log_filename = 'postgresql-%Y-%m-%d.log'
+log_min_duration_statement = 1000       # log queries slower than 1s — useful for support/debugging later
