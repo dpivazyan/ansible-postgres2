@@ -13,6 +13,9 @@
       - curl
       - ca-certificates
       - gnupg
+      - acl        # required for become_user (Step 4 switches to the postgres user) —
+                   # without it, Ansible's temp-file permission handling breaks with
+                   # a chmod ACL error when escalating to an unprivileged user
     state: present
     update_cache: true
 
