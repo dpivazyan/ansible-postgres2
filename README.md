@@ -7,36 +7,13 @@ order events).
 
 ## Requirements
 
-- Target host: **Ubuntu** (22.04/24.04) or **Rocky Linux / AlmaLinux** (9.x) —
-  branches automatically on `ansible_os_family` (Debian vs RedHat).
+- Target host: **Ubuntu** (22.04/24.04 tested; any release PGDG supports
+  should work since the repo is selected via `ansible_distribution_release`).
 - Ansible control side: collections in `requirements.yml` — AWX installs
   these automatically when it syncs the Project, as long as this file sits
   at the repo root.
 - SSH access + sudo (`become: true`) on the target — set up via an AWX
   Machine Credential.
-
-## OS support notes
-
-The role branches on `ansible_os_family` in a few places where the two
-distro families genuinely differ, not just in package names:
-
-| Aspect | Debian/Ubuntu | Rocky/AlmaLinux |
-|---|---|---|
-| PGDG repo | apt `.list` + signing key | RPM package from PGDG's yum repo |
-| Extra step | — | disable AppStream's built-in `postgresql` module first |
-| initdb | automatic on install | explicit `postgresql-{{ version }}-setup initdb` |
-| Config file location | always `/etc/postgresql/{{ version }}/main/` | inside the data directory itself — moves if PGDATA moves |
-| conf.d auto-included | yes (Debian packaging default) | no — role adds the `include_dir` line explicitly |
-| PGDATA relocation gate | AppArmor profile update | SELinux context (`sefcontext` + `restorecon`) |
-| Service naming | `postgresql@{{ version }}-main` | `postgresql-{{ version }}` |
-| Firewall | not touched (ufw usually inactive on cloud images) | `firewalld` port opened explicitly |
-
-All of this is captured in `vars/Debian.yml` / `vars/RedHat.yml`, loaded
-automatically in `tasks/main.yml` — the disk/config/user task files
-themselves reference variables like `pg_config_dir` and `pg_service_name`
-rather than hardcoding paths, so they don't need to know which OS they're
-running on.
-
 
 ## Variables (the parameter contract)
 
@@ -59,6 +36,7 @@ orchestrator call — the defaults are for manual testing only.
 | `pg_app_db_user`           | App user created                                          | `appuser`             |
 | `pg_app_db_password`       | App user password — **must** be overridden, never left default | (from Vault) |
 | `pg_app_user_can_create_db`| Whether the app user gets `CREATEDB` (extra databases on this instance) | `false` |
+| `target_ip`                | (top-level playbook, not the role) IP of the target VM — built into an in-memory inventory group via `add_host`, never a persisted AWX host | `10.0.5.50` |
 
 ## Access model for the customer's user
 
@@ -66,40 +44,57 @@ The app user is made **OWNER of both the database and its public schema**,
 not granted the Postgres `SUPERUSER` attribute. Ownership gives them
 everything reasonably meant by "admin on my database" — create/alter/drop
 any object, manage extensions, grant privileges to any additional users
-they create — without the ability to touch the OS, other databases, or
-server-wide configuration that real superuser would allow (arbitrary file
-access via `COPY ... PROGRAM`, untrusted extensions, disabling logging,
-etc.). This matters even though each customer has a dedicated VM, since
-it's what keeps the instance in a state your own backup/monitoring/support
-tooling can reliably reason about.
+they create — without the ability to touch the OS or server-wide
+configuration that real superuser would allow (arbitrary file access via
+`COPY ... PROGRAM`, untrusted extensions, disabling logging, etc.). This
+matters even though each customer has a dedicated VM, since it's what
+keeps the instance in a state your own backup/monitoring/support tooling
+can reliably reason about.
+
+Additional roles/users beyond `pg_app_db_user` are handled by support on
+request, not self-service — `pg_app_db_user` has `NOCREATEROLE`.
 
 ## What it does, in order
 
-1. **install_Debian.yml / install_RedHat.yml** (branched by `ansible_os_family`)
-   — adds the PGDG repo, installs the exact `pg_version` requested, starts
-   the service. RHEL path additionally disables the conflicting AppStream
-   module and runs `initdb` explicitly.
+1. **install_postgres.yml** — adds the PGDG apt repo matched to the
+   target's Ubuntu release, installs the exact `pg_version` requested,
+   starts the service.
 2. **disk.yml** — if `pg_use_separate_data_disk`, formats + mounts the
-   attached disk, stops Postgres, relocates PGDATA there via rsync, then
-   repoints the service at the new location (`data_directory` on Debian,
-   the systemd sysconfig file on RHEL), grants access via AppArmor
-   (Debian) or SELinux context (RHEL), restarts. If not, just confirms
-   the service is running on the default path.
-3. **configure.yml** — sets `password_encryption = scram-sha-256`, ensures
-   conf.d is included (explicit on RHEL, automatic on Debian), drops
-   tier-tuned settings into `conf.d/dbaas_overrides.conf`, templates
-   `pg_hba.conf`, opens the firewalld port on RHEL.
-4. **users_db.yml** — creates the app database, app user (scram
-   password, no superuser), grants, and prints a deployment summary.
+   attached disk, stops Postgres, relocates PGDATA there via rsync,
+   updates `data_directory`, grants AppArmor access to the new path,
+   restarts. If not, just confirms the service is running on the
+   default PGDG path.
+3. **configure.yml** — sets `password_encryption = scram-sha-256`,
+   drops tier-tuned settings into `conf.d/dbaas_overrides.conf`,
+   templates `pg_hba.conf` from `pg_allowed_cidrs`.
+4. **users_db.yml** — creates the app user, then the app database and
+   public schema owned by that user, and prints a deployment summary.
+
+A `meta: flush_handlers` runs between Step 3 and Step 4 to guarantee any
+pending config restart (e.g. `password_encryption`) is actually applied
+before the user's password gets created — Ansible only runs notified
+handlers at the end of the play by default, which would otherwise let
+Step 4 run against stale config.
+
+## How the target VM is selected (no static inventory needed)
+
+`deploy_postgres.yml` (the top-level playbook) takes `target_ip` as an
+extra_var and uses `add_host` to build the target in-memory for that run
+only — no AWX inventory objects are created, updated, or need cleanup
+between requests. This is what makes concurrent runs against different
+IPs safe by construction: nothing is written to shared AWX state.
 
 ## Running it manually (outside AWX) for testing
 
 ```bash
 ansible-galaxy collection install -r requirements.yml
-ansible-playbook -i "TARGET_IP," deploy_postgres.yml \
+ansible-playbook deploy_postgres.yml \
   -u YOUR_SSH_USER --private-key ~/.ssh/id_rsa \
-  -e "pg_version=16 pg_use_separate_data_disk=false pg_app_db_password=TestPass123!"
+  -e "target_ip=TARGET_IP pg_version=16 pg_use_separate_data_disk=false pg_app_db_password=TestPass123"
 ```
+(Avoid `!` in test passwords typed on an interactive shell — bash's
+history expansion mangles it even inside single quotes. Use `set +H` if
+you need one for a real test.)
 
 ## Wiring into AWX
 
@@ -107,23 +102,25 @@ ansible-playbook -i "TARGET_IP," deploy_postgres.yml \
    automatically.
 2. **Credential** — Machine type, SSH key matching what's trusted on
    target VMs (or the key CloudStack injects at deploy time).
-3. **Inventory** — one host per deployment request; `ansible_host` set
-   to the IP CloudStack returned. Can be built dynamically later.
+3. **Inventory** — the built-in `localhost`-only inventory is enough;
+   `target_ip` supplies the real target per run (see above).
 4. **Job Template** — playbook = `deploy_postgres.yml`, attach the
-   Project/Inventory/Credential above.
-5. **Survey** — one field per variable in the table above. This
-   Survey *is* the API contract: whatever calls
+   Project/Inventory/Credential above. Enable **"Prompt on launch"** for
+   Variables (or use a Survey) — without it, extra_vars sent at launch
+   are silently ignored in favor of anything saved on the template.
+   Enable **"Enable Concurrent Jobs"** so simultaneous requests for
+   different VMs actually run in parallel rather than queuing.
+5. **Survey** — one field per variable in the table above, plus
+   `target_ip`. This Survey *is* the API contract: whatever calls
    `POST /api/v2/job_templates/{id}/launch/` needs to supply
-   `extra_vars` matching these field names exactly.
+   `extra_vars` matching these field names exactly. Booleans should be
+   sent as real JSON booleans (`false`, not `"false"`) — the role
+   guards the disk-toggle variable with a `| bool` filter for safety,
+   but it's worth sending them correctly regardless.
 
 ## Known limitations / things to revisit
 
-- Ubuntu + Rocky/AlmaLinux only — `main.yml` asserts this and fails fast
-  on anything else.
-- RHEL disk-relocation path (SELinux context, sysconfig PGDATA override)
-  has not yet been run against a real second disk — worth a dedicated
-  test pass on an AlmaLinux VM with an attached data disk before relying
-  on it in production.
+- Ubuntu only — `main.yml` asserts this and fails fast on anything else.
 - No backup/WAL archiving configured yet (pgBackRest/WAL-G — future step).
 - No monitoring agent install yet.
 - Password is passed as a plain extra_var — fine for testing, but in
@@ -132,3 +129,6 @@ ansible-playbook -i "TARGET_IP," deploy_postgres.yml \
 - `pg_allowed_cidrs` defaults to `10.0.0.0/8` — must be tightened per
   deployment by whatever calls this, never left as a broad default in
   production.
+- `community.postgresql` is pinned to a `3.x` range in `requirements.yml`
+  after hitting a parameter rename (`update_password`) between minor
+  versions — re-verify this range if bumping the collection later.

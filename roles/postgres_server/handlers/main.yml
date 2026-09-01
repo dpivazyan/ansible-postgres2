@@ -14,12 +14,5 @@
     name: apparmor
     state: reloaded
 
-- name: reload systemd daemon
-  ansible.builtin.systemd:
-    daemon_reload: true
-
-- name: restorecon data directory
-  ansible.builtin.command: "restorecon -R -v {{ pg_data_mount_point }}"
-
 # Step 4 uses community.postgresql modules directly (no handler needed --
 # those modules apply changes immediately, they don't require a restart/reload)

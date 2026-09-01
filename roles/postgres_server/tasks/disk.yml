@@ -1,15 +1,13 @@
 ---
 # This step only touches disk/filesystem/PGDATA location -- no postgresql.conf
-# tuning happens here (that's Step 3). All paths come from the OS-specific
-# vars loaded in main.yml (pg_data_dir_default, pg_config_dir, etc.) so this
-# file itself needs no OS branching except where the underlying mechanism
-# is genuinely different (security module, service environment).
+# editing happens here (that's Step 3). Keeping "where data lives" separate
+# from "how postgres is tuned" means either can change without touching the other.
 #
 # Two paths:
 #   pg_use_separate_data_disk: true  -> format + mount the attached data disk,
-#                                        relocate PGDATA there
-#   pg_use_separate_data_disk: false -> leave PGDATA on the root disk at the
-#                                        distro's default location
+#                                        move PGDATA there
+#   pg_use_separate_data_disk: false -> leave PGDATA on the root disk as PGDG's
+#                                        package default (only meant for small/test tiers)
 
 - name: (Separate disk) Create filesystem on the data disk
   community.general.filesystem:
@@ -31,7 +29,7 @@
     path: "{{ pg_data_mount_point }}"
     src: "{{ pg_data_disk_device }}"
     fstype: "{{ pg_data_fs_type }}"
-    state: mounted
+    state: mounted     # mounts now AND writes /etc/fstab so it survives reboot
   when: pg_use_separate_data_disk | bool
 
 - name: (Separate disk) Stop PostgreSQL before moving PGDATA
@@ -53,72 +51,33 @@
     - pg_use_separate_data_disk | bool
     - not pg_data_already_migrated.stat.exists
 
-# --- Debian only: config lives separately from data (see vars/Debian.yml),
-#     so data_directory needs to be explicitly repointed. RHEL doesn't need
-#     this task at all -- its config lives inside the data dir, so moving
-#     the data (above) already moved the config; pg_config_dir in
-#     vars/RedHat.yml is computed to follow it automatically. ---
-- name: "(Separate disk, Debian) Point postgresql.conf at the new data directory"
+- name: (Separate disk) Point PostgreSQL's cluster config at the new data directory
   ansible.builtin.lineinfile:
     path: "{{ pg_conf_path }}"
     regexp: "^#?data_directory\\s*="
     line: "data_directory = '{{ pg_data_mount_point }}'"
-  when:
-    - pg_use_separate_data_disk | bool
-    - ansible_os_family == 'Debian'
+  when: pg_use_separate_data_disk | bool
 
-# --- RHEL only: the systemd unit reads PGDATA from this environment file
-#     rather than from postgresql.conf, so it must be updated to point at
-#     the new location or the service will fail to start. ---
-- name: "(Separate disk, RedHat) Point the systemd service at the new PGDATA"
-  ansible.builtin.copy:
-    dest: "/etc/sysconfig/pgsql/postgresql-{{ pg_version }}"
-    content: "PGDATA={{ pg_data_mount_point }}\n"
-    owner: root
-    group: root
-    mode: "0644"
-  when:
-    - pg_use_separate_data_disk | bool
-    - ansible_os_family == 'RedHat'
-  notify: reload systemd daemon
-
-# --- Debian: AppArmor restricts which paths the postgres process may
-#     touch -- without this, postgres fails to start against any
-#     data_directory outside the package's default location. ---
-- name: "(Separate disk, Debian) Allow AppArmor access to the new data directory"
+# Ubuntu's postgresql package uses AppArmor, which restricts which paths
+# the postgres process may read/write -- without this, postgres will fail
+# to start against any data_directory outside the default location.
+- name: (Separate disk) Allow AppArmor access to the new data directory
   ansible.builtin.blockinfile:
     path: /etc/apparmor.d/local/usr.sbin.postgres
     create: true
     block: |
       {{ pg_data_mount_point }}/ r,
       {{ pg_data_mount_point }}/** rwk,
-  when:
-    - pg_use_separate_data_disk | bool
-    - ansible_os_family == 'Debian'
+  when: pg_use_separate_data_disk | bool
   notify: reload apparmor
-
-# --- RHEL: SELinux is the equivalent gate -- the new mount point needs
-#     the postgresql_db_t context or postgres will be denied access,
-#     usually with a confusing generic permission error rather than
-#     anything that obviously points at SELinux. ---
-- name: "(Separate disk, RedHat) Set SELinux context for the new data directory"
-  community.general.sefcontext:
-    target: "{{ pg_data_mount_point }}(/.*)?"
-    setype: postgresql_db_t
-    state: present
-  when:
-    - pg_use_separate_data_disk | bool
-    - ansible_os_family == 'RedHat'
-  notify: restorecon data directory
 
 - name: (Separate disk) Start PostgreSQL against the new data directory
   ansible.builtin.systemd:
     name: "{{ pg_service_name }}"
     state: started
-    daemon_reload: true   # picks up the sysconfig change on RHEL before starting
   when: pg_use_separate_data_disk | bool
 
-- name: (Root disk fallback) Confirm PostgreSQL is running on the default data directory
+- name: (Root disk fallback) Confirm PostgreSQL is running on default data directory
   ansible.builtin.systemd:
     name: "{{ pg_service_name }}"
     state: started

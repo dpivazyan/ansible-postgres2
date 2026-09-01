@@ -1,8 +1,9 @@
 ---
 collections:
   - name: community.postgresql
-    version: ">=3.0.0"
+    version: ">=3.3.0,<4.0.0"   # pinned range — avoids drift like the update_password
+                                # parameter change we hit between minor versions
   - name: ansible.posix     # provides the 'mount' module we need for disk handling
     version: ">=1.5.0"
-  - name: community.general # provides 'filesystem' (mkfs) and 'sefcontext' (SELinux, RHEL family)
+  - name: community.general # provides the 'filesystem' module (mkfs wrapper)
     version: ">=8.0.0"

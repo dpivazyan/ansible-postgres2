@@ -41,6 +41,5 @@ pg_app_db_password: "CHANGE_ME"      # orchestrator should always override — p
 pg_app_user_can_create_db: false
 
 # --- Superuser / OS-level ---
-# pg_service_name is NOT set here — it's determined automatically per-OS
-# in roles/postgres_server/vars/Debian.yml or vars/RedHat.yml, loaded via
-# include_vars in tasks/main.yml based on ansible_os_family.
+# pg_service_name is set in roles/postgres_server/vars/main.yml
+# (internal, not meant to be overridden per-request).
