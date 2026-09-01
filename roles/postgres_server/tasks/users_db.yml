@@ -23,7 +23,7 @@
     state: present
   become: true
   become_user: postgres
-  no_log: true   # keeps the password out of AWX job output/logs
+  #no_log: true   # keeps the password out of AWX job output/logs
 
 - name: Grant the app user full privileges on the app database
   community.postgresql.postgresql_privs:
