@@ -23,7 +23,7 @@ pg_port: 5432
 # CIDRs allowed to connect — should come from the orchestrator based on
 # the customer's network/security group, never left wide open in prod.
 pg_allowed_cidrs:
-  - "0.0.0.0/0"
+  - "10.0.0.0/8"
 
 # --- Sizing / tuning (tier-based, orchestrator picks the tier) ---
 # "small" | "medium" | "large" — used to select values in vars/main.yml
@@ -32,7 +32,7 @@ pg_tier: "small"
 # --- App database + admin user created after install ---
 pg_app_db_name: "appdb"
 pg_app_db_user: "appuser"
-pg_app_db_password: "password123"      # orchestrator should always override — pull from Vault, never commit real value
+pg_app_db_password: "CHANGE_ME"      # orchestrator should always override — pull from Vault, never commit real value
 # The app user is always made OWNER of pg_app_db_name and its public
 # schema — that's the "admin on their database" access. This toggle
 # only controls the separate, narrower CREATEDB attribute (ability to
