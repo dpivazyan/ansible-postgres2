@@ -1,25 +1,31 @@
 ---
-# Orchestrates the sub-task files in execution order.
-# Keeping main.yml as a pure "table of contents" makes it easy to see
-# the whole flow at a glance, and to comment out a step during testing
-# without digging through a huge task list.
-
 - name: Assert we're running on a supported OS
   ansible.builtin.assert:
     that:
-      - ansible_distribution == "Ubuntu"
-    fail_msg: "This role currently only supports Ubuntu. Got: {{ ansible_distribution }}"
+      - ansible_os_family in ['Debian', 'RedHat']
+    fail_msg: >-
+      This role supports Ubuntu (Debian family) and Rocky/AlmaLinux
+      (RedHat family). Got: {{ ansible_distribution }} ({{ ansible_os_family }})
 
-- name: STEP 1 — Add PGDG repo and install PostgreSQL package
-  ansible.builtin.import_tasks: repo_and_install.yml
+- name: Load OS-specific paths and service naming
+  ansible.builtin.include_vars: "{{ ansible_os_family }}.yml"
+  # Loads vars/Debian.yml or vars/RedHat.yml -- this is what lets every
+  # task file below stay OS-agnostic, referencing pg_config_dir /
+  # pg_conf_path / pg_service_name etc. rather than hardcoded paths.
 
-- name: STEP 2 — Prepare and mount data disk, relocate PGDATA
+- name: STEP 1 (Debian/Ubuntu) -- Add PGDG repo and install PostgreSQL
+  ansible.builtin.import_tasks: install_Debian.yml
+  when: ansible_os_family == 'Debian'
+
+- name: STEP 1 (RHEL family) -- Add PGDG repo and install PostgreSQL
+  ansible.builtin.import_tasks: install_RedHat.yml
+  when: ansible_os_family == 'RedHat'
+
+- name: STEP 2 -- Prepare and mount data disk, relocate PGDATA
   ansible.builtin.import_tasks: disk.yml
 
-# --- Steps below are stubs for now — filled in next ---
-
-- name: STEP 3 — Template postgresql.conf / pg_hba.conf
+- name: STEP 3 -- Template postgresql.conf / pg_hba.conf
   ansible.builtin.import_tasks: configure.yml
 
-- name: STEP 4 — Create app database, user, grants
+- name: STEP 4 -- Create app database, user, grants
   ansible.builtin.import_tasks: users_db.yml

@@ -12,7 +12,7 @@ pg_version: "16"                     # e.g. "14", "15", "16", "17"
 # --- Storage ---
 # Set true if CloudStack attached a separate data disk for this instance.
 # If false, PGDATA stays on the root disk (only fine for small/test tiers).
-pg_use_separate_data_disk: false
+pg_use_separate_data_disk: true
 pg_data_disk_device: "/dev/sdb"      # block device of the attached data volume
 pg_data_mount_point: "/var/lib/postgresql/data"
 pg_data_fs_type: "ext4"
@@ -32,7 +32,9 @@ pg_tier: "small"
 # --- App database + admin user created after install ---
 pg_app_db_name: "postgres"
 pg_app_db_user: "postgres"
-pg_app_db_password: "password"      # orchestrator should always override — pull from Vault, never commit real value
+pg_app_db_password: "postgres"      # orchestrator should always override — pull from Vault, never commit real value
 
 # --- Superuser / OS-level ---
-pg_service_name: "postgresql@{{ pg_version }}-main"   # Ubuntu's PGDG service naming
+# pg_service_name is NOT set here — it's determined automatically per-OS
+# in roles/postgres_server/vars/Debian.yml or vars/RedHat.yml, loaded via
+# include_vars in tasks/main.yml based on ansible_os_family.

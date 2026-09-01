@@ -1,34 +1,62 @@
 ---
-# Config templating only — no disk logic (Step 2) or database/user
-# creation (Step 4) happens here. Deliberately narrow scope.
+# Config templating only -- no disk logic (Step 2) or database/user
+# creation (Step 4) happens here. All paths come from the OS-specific
+# vars loaded in main.yml.
+
+- name: Ensure conf.d directory exists
+  ansible.builtin.file:
+    path: "{{ pg_conf_d_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: "(RHEL only) Ensure postgresql.conf includes conf.d"
+  ansible.builtin.lineinfile:
+    path: "{{ pg_conf_path }}"
+    line: "include_dir 'conf.d'"
+    insertafter: EOF
+  when: pg_conf_d_needs_include_line | bool
+  notify: restart postgresql
+  # Debian's packaging already adds this line by default (see
+  # vars/Debian.yml, pg_conf_d_needs_include_line: false) -- only RHEL
+  # needs it added explicitly.
 
 - name: Set password encryption method to scram-sha-256 (must be set before any passwords are created)
   ansible.builtin.lineinfile:
-    path: "/etc/postgresql/{{ pg_version }}/main/postgresql.conf"
+    path: "{{ pg_conf_path }}"
     regexp: "^#?password_encryption\\s*="
     line: "password_encryption = scram-sha-256"
   notify: restart postgresql
 
-- name: Drop our tuning overrides into postgresql's conf.d include directory
+- name: Drop our tuning overrides into conf.d
   ansible.builtin.template:
     src: pg_dbaas_overrides.conf.j2
-    dest: "/etc/postgresql/{{ pg_version }}/main/conf.d/dbaas_overrides.conf"
+    dest: "{{ pg_conf_d_dir }}/dbaas_overrides.conf"
     owner: postgres
     group: postgres
     mode: "0644"
   notify: restart postgresql
-  # Note: Ubuntu's PGDG package auto-includes conf.d/*.conf from the
-  # main postgresql.conf — no extra "include_dir" line needed, it's
-  # already there by default on Debian/Ubuntu packaging.
 
 - name: Template pg_hba.conf (controls who can connect and how)
   ansible.builtin.template:
     src: pg_hba.conf.j2
-    dest: "/etc/postgresql/{{ pg_version }}/main/pg_hba.conf"
+    dest: "{{ pg_hba_path }}"
     owner: postgres
     group: postgres
     mode: "0640"
   notify: reload postgresql
-  # pg_hba changes only need a reload, not a full restart — reload is
-  # non-disruptive to existing connections, worth keeping separate
-  # from the restart handler above for that reason.
+  # pg_hba changes only need a reload, not a full restart -- reload is
+  # non-disruptive to existing connections.
+
+- name: "(RHEL only) Open PostgreSQL port in firewalld"
+  ansible.posix.firewalld:
+    port: "{{ pg_port }}/tcp"
+    permanent: true
+    immediate: true
+    state: enabled
+  when: ansible_os_family == 'RedHat'
+  ignore_errors: true   # minimal test VMs sometimes don't run firewalld at all -- safe to skip rather than fail the whole run
+  # Ubuntu's ufw is commonly inactive by default on cloud images, so no
+  # equivalent task is added for Debian -- revisit if your Ubuntu images
+  # ship with ufw enabled by default.

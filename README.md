@@ -7,13 +7,36 @@ order events).
 
 ## Requirements
 
-- Target host: Ubuntu (22.04 or 24.04 tested; any release PGDG supports
-  should work since the repo is selected via `ansible_distribution_release`)
+- Target host: **Ubuntu** (22.04/24.04) or **Rocky Linux / AlmaLinux** (9.x) —
+  branches automatically on `ansible_os_family` (Debian vs RedHat).
 - Ansible control side: collections in `requirements.yml` — AWX installs
   these automatically when it syncs the Project, as long as this file sits
   at the repo root.
 - SSH access + sudo (`become: true`) on the target — set up via an AWX
   Machine Credential.
+
+## OS support notes
+
+The role branches on `ansible_os_family` in a few places where the two
+distro families genuinely differ, not just in package names:
+
+| Aspect | Debian/Ubuntu | Rocky/AlmaLinux |
+|---|---|---|
+| PGDG repo | apt `.list` + signing key | RPM package from PGDG's yum repo |
+| Extra step | — | disable AppStream's built-in `postgresql` module first |
+| initdb | automatic on install | explicit `postgresql-{{ version }}-setup initdb` |
+| Config file location | always `/etc/postgresql/{{ version }}/main/` | inside the data directory itself — moves if PGDATA moves |
+| conf.d auto-included | yes (Debian packaging default) | no — role adds the `include_dir` line explicitly |
+| PGDATA relocation gate | AppArmor profile update | SELinux context (`sefcontext` + `restorecon`) |
+| Service naming | `postgresql@{{ version }}-main` | `postgresql-{{ version }}` |
+| Firewall | not touched (ufw usually inactive on cloud images) | `firewalld` port opened explicitly |
+
+All of this is captured in `vars/Debian.yml` / `vars/RedHat.yml`, loaded
+automatically in `tasks/main.yml` — the disk/config/user task files
+themselves reference variables like `pg_config_dir` and `pg_service_name`
+rather than hardcoding paths, so they don't need to know which OS they're
+running on.
+
 
 ## Variables (the parameter contract)
 
@@ -38,17 +61,20 @@ orchestrator call — the defaults are for manual testing only.
 
 ## What it does, in order
 
-1. **repo_and_install.yml** — adds the PGDG apt repo matched to the
-   target's Ubuntu release, installs the exact `pg_version` requested,
-   starts the service.
+1. **install_Debian.yml / install_RedHat.yml** (branched by `ansible_os_family`)
+   — adds the PGDG repo, installs the exact `pg_version` requested, starts
+   the service. RHEL path additionally disables the conflicting AppStream
+   module and runs `initdb` explicitly.
 2. **disk.yml** — if `pg_use_separate_data_disk`, formats + mounts the
-   attached disk, stops Postgres, relocates PGDATA there via rsync,
-   updates `data_directory`, grants AppArmor access to the new path,
-   restarts. If not, just confirms the service is running on the
-   default PGDG path.
-3. **configure.yml** — sets `password_encryption = scram-sha-256`,
-   drops tier-tuned settings into `conf.d/dbaas_overrides.conf`,
-   templates `pg_hba.conf` from `pg_allowed_cidrs`.
+   attached disk, stops Postgres, relocates PGDATA there via rsync, then
+   repoints the service at the new location (`data_directory` on Debian,
+   the systemd sysconfig file on RHEL), grants access via AppArmor
+   (Debian) or SELinux context (RHEL), restarts. If not, just confirms
+   the service is running on the default path.
+3. **configure.yml** — sets `password_encryption = scram-sha-256`, ensures
+   conf.d is included (explicit on RHEL, automatic on Debian), drops
+   tier-tuned settings into `conf.d/dbaas_overrides.conf`, templates
+   `pg_hba.conf`, opens the firewalld port on RHEL.
 4. **users_db.yml** — creates the app database, app user (scram
    password, no superuser), grants, and prints a deployment summary.
 
@@ -78,7 +104,12 @@ ansible-playbook -i "TARGET_IP," deploy_postgres.yml \
 
 ## Known limitations / things to revisit
 
-- Ubuntu only — `main.yml` asserts this and fails fast on anything else.
+- Ubuntu + Rocky/AlmaLinux only — `main.yml` asserts this and fails fast
+  on anything else.
+- RHEL disk-relocation path (SELinux context, sysconfig PGDATA override)
+  has not yet been run against a real second disk — worth a dedicated
+  test pass on an AlmaLinux VM with an attached data disk before relying
+  on it in production.
 - No backup/WAL archiving configured yet (pgBackRest/WAL-G — future step).
 - No monitoring agent install yet.
 - Password is passed as a plain extra_var — fine for testing, but in

@@ -4,5 +4,5 @@ collections:
     version: ">=3.0.0"
   - name: ansible.posix     # provides the 'mount' module we need for disk handling
     version: ">=1.5.0"
-  - name: community.general # provides the 'filesystem' module (mkfs wrapper)
+  - name: community.general # provides 'filesystem' (mkfs) and 'sefcontext' (SELinux, RHEL family)
     version: ">=8.0.0"

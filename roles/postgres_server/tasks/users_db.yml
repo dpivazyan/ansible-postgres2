@@ -52,4 +52,4 @@
       - "PostgreSQL {{ pg_version }} deployed successfully"
       - "Listening on {{ pg_listen_addresses }}:{{ pg_port }}"
       - "Database: {{ pg_app_db_name }}  |  User: {{ pg_app_db_user }}"
-      - "Data directory: {{ pg_data_mount_point if pg_use_separate_data_disk else '/var/lib/postgresql/' + pg_version + '/main (default)' }}"
+      - "Data directory: {{ pg_data_mount_point if (pg_use_separate_data_disk | bool) else pg_data_dir_default }}"

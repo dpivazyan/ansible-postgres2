@@ -1,0 +1,54 @@
+---
+# RHEL-family install differs from Debian in three important ways:
+#   1. RHEL8+ ships its own "postgresql" AppStream module which conflicts
+#      with PGDG's packages unless explicitly disabled first.
+#   2. PGDG packages here do NOT auto-run initdb on install (Debian's do)
+#      — it must be triggered explicitly via the *-setup script.
+#   3. python3-psycopg2 (needed by community.postgresql modules) isn't in
+#      the base repos — it comes from EPEL.
+
+- name: Install the PGDG repo RPM for this RHEL major version
+  ansible.builtin.dnf:
+    name: "https://download.postgresql.org/pub/repos/yum/reporpms/EL-{{ ansible_distribution_major_version }}-x86_64/pgdg-redhat-repo-latest.noarch.rpm"
+    state: present
+    disable_gpg_check: false
+
+- name: Install EPEL (provides python3-psycopg2)
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+
+- name: Disable the built-in AppStream postgresql module (conflicts with PGDG)
+  ansible.builtin.command: dnf -qy module disable postgresql
+  register: pg_module_disable
+  changed_when: "'Nothing to do' not in pg_module_disable.stdout"
+  failed_when: false   # minimal/stream installs sometimes lack this module entirely — safe to ignore either way
+
+- name: Install acl (required for become_user — same reason as Debian)
+  ansible.builtin.dnf:
+    name: acl
+    state: present
+
+- name: Install policycoreutils-python-utils (needed for SELinux context management in disk.yml)
+  ansible.builtin.dnf:
+    name: policycoreutils-python-utils
+    state: present
+
+- name: Install the requested PostgreSQL version and tools
+  ansible.builtin.dnf:
+    name:
+      - "postgresql{{ pg_version }}-server"
+      - "postgresql{{ pg_version }}-contrib"
+      - python3-psycopg2
+    state: present
+
+- name: Initialize the database cluster
+  ansible.builtin.command: "/usr/pgsql-{{ pg_version }}/bin/postgresql-{{ pg_version }}-setup initdb"
+  args:
+    creates: "{{ pg_data_dir_default }}/PG_VERSION"   # idempotency guard — initdb isn't safe to re-run
+
+- name: Ensure PostgreSQL service is enabled and started
+  ansible.builtin.systemd:
+    name: "{{ pg_service_name }}"
+    enabled: true
+    state: started
