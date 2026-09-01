@@ -27,5 +27,12 @@
 - name: STEP 3 -- Template postgresql.conf / pg_hba.conf
   ansible.builtin.import_tasks: configure.yml
 
+- name: Apply any pending config changes (restart/reload) before creating users
+  ansible.builtin.meta: flush_handlers
+  # Without this, Ansible only runs notified handlers at the END of the
+  # play -- meaning Step 4's password creation could run against the
+  # OLD password_encryption setting if Step 3 changed it. Forcing the
+  # flush here guarantees Step 4 always sees the config as templated.
+
 - name: STEP 4 -- Create app database, user, grants
   ansible.builtin.import_tasks: users_db.yml

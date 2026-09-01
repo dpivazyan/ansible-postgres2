@@ -28,6 +28,11 @@
     name: "{{ pg_app_db_user }}"
     password: "{{ pg_app_db_password }}"
     role_attr_flags: "NOSUPERUSER,{{ 'CREATEDB' if (pg_app_user_can_create_db | bool) else 'NOCREATEDB' }},NOCREATEROLE"
+    update_password: always   # without this, some collection versions only set the
+                               # password when the role is first created, and silently
+                               # skip it on later runs against an existing role — which
+                               # means a changed pg_app_db_password wouldn't actually
+                               # take effect on redeploys/retries
     state: present
   become: true
   become_user: postgres
