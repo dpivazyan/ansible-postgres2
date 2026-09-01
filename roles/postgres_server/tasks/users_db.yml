@@ -3,45 +3,52 @@
 # method and the user created here gets a properly hashed password.
 #
 # These tasks connect as the OS 'postgres' user over the local Unix
-# socket (peer auth, see pg_hba.conf.j2) — no password needed for the
+# socket (peer auth, see pg_hba.conf.j2) -- no password needed for the
 # connection Ansible itself makes to run these.
+#
+# Ownership model: the app user is made the OWNER of both the database
+# and its public schema. That gives them everything reasonably meant by
+# "admin on my database" -- full control to create/alter/drop tables,
+# indexes, functions, extensions, and to grant privileges on their own
+# objects to any additional users they create -- WITHOUT the real
+# Postgres SUPERUSER attribute, which would let them touch the OS,
+# other databases, or server-wide config. See README for the reasoning.
 
-- name: Ensure application database exists
-  community.postgresql.postgresql_db:
-    name: "{{ pg_app_db_name }}"
-    encoding: UTF-8
-    state: present
-  become: true
-  become_user: postgres
+- name: Guard against pg_app_db_user being set to the postgres superuser
+  ansible.builtin.assert:
+    that:
+      - pg_app_db_user != 'postgres'
+    fail_msg: >-
+      pg_app_db_user is set to 'postgres' -- that's the bootstrap superuser
+      and Postgres will refuse to strip its SUPERUSER attribute. Set
+      pg_app_db_user to a distinct application username instead.
 
 - name: Ensure application user exists with the supplied password
   community.postgresql.postgresql_user:
-    db: "{{ pg_app_db_name }}"
     name: "{{ pg_app_db_user }}"
     password: "{{ pg_app_db_password }}"
-    role_attr_flags: NOSUPERUSER,NOCREATEDB,NOCREATEROLE
+    role_attr_flags: "NOSUPERUSER,{{ 'CREATEDB' if (pg_app_user_can_create_db | bool) else 'NOCREATEDB' }},NOCREATEROLE"
     state: present
   become: true
   become_user: postgres
-  #no_log: true   # keeps the password out of AWX job output/logs
+  no_log: true   # keeps the password out of AWX job output/logs
+  # User is created before the database (reversed from before) so the
+  # database can be created with owner set directly, in one step.
 
-- name: Grant the app user full privileges on the app database
-  community.postgresql.postgresql_privs:
-    db: "{{ pg_app_db_name }}"
-    role: "{{ pg_app_db_user }}"
-    type: database
-    privs: ALL
+- name: Ensure application database exists, owned by the app user
+  community.postgresql.postgresql_db:
+    name: "{{ pg_app_db_name }}"
+    encoding: UTF-8
+    owner: "{{ pg_app_db_user }}"
     state: present
   become: true
   become_user: postgres
 
-- name: Grant privileges on the public schema (needed for CREATE TABLE etc. on PG15+)
-  community.postgresql.postgresql_privs:
+- name: Make the app user owner of the public schema (full CREATE/manage rights inside it)
+  community.postgresql.postgresql_schema:
     db: "{{ pg_app_db_name }}"
-    role: "{{ pg_app_db_user }}"
-    type: schema
-    objs: public
-    privs: ALL
+    name: public
+    owner: "{{ pg_app_db_user }}"
     state: present
   become: true
   become_user: postgres
@@ -51,5 +58,5 @@
     msg:
       - "PostgreSQL {{ pg_version }} deployed successfully"
       - "Listening on {{ pg_listen_addresses }}:{{ pg_port }}"
-      - "Database: {{ pg_app_db_name }}  |  User: {{ pg_app_db_user }}"
+      - "Database: {{ pg_app_db_name }}  |  Owner/admin user: {{ pg_app_db_user }}"
       - "Data directory: {{ pg_data_mount_point if (pg_use_separate_data_disk | bool) else pg_data_dir_default }}"

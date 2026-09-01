@@ -58,6 +58,20 @@ orchestrator call — the defaults are for manual testing only.
 | `pg_app_db_name`           | Database created for the customer                       | `appdb`               |
 | `pg_app_db_user`           | App user created                                          | `appuser`             |
 | `pg_app_db_password`       | App user password — **must** be overridden, never left default | (from Vault) |
+| `pg_app_user_can_create_db`| Whether the app user gets `CREATEDB` (extra databases on this instance) | `false` |
+
+## Access model for the customer's user
+
+The app user is made **OWNER of both the database and its public schema**,
+not granted the Postgres `SUPERUSER` attribute. Ownership gives them
+everything reasonably meant by "admin on my database" — create/alter/drop
+any object, manage extensions, grant privileges to any additional users
+they create — without the ability to touch the OS, other databases, or
+server-wide configuration that real superuser would allow (arbitrary file
+access via `COPY ... PROGRAM`, untrusted extensions, disabling logging,
+etc.). This matters even though each customer has a dedicated VM, since
+it's what keeps the instance in a state your own backup/monitoring/support
+tooling can reliably reason about.
 
 ## What it does, in order
 
