@@ -40,6 +40,16 @@ pg_app_db_password: "CHANGE_ME"      # orchestrator should always override — p
 # since the current model is one database per VM.
 pg_app_user_can_create_db: false
 
+# --- DANGEROUS: grants real Postgres SUPERUSER to pg_app_db_user ---
+# Bypasses every permission check (RLS, grants, everything) and enables
+# OS-level command execution via COPY ... PROGRAM and untrusted
+# extensions. Only turn this on for a specific customer's explicit,
+# documented request (e.g. they need superuser-only extensions) — never
+# as a default, and treat it as a decision worth a second person's
+# sign-off, not just a flag flip. Overrides pg_app_user_can_create_db
+# (a superuser can always create databases regardless of that setting).
+pg_app_user_superuser: false
+
 # --- Superuser / OS-level ---
 # pg_service_name is set in roles/postgres_server/vars/main.yml
 # (internal, not meant to be overridden per-request).

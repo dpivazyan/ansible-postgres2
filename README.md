@@ -36,6 +36,7 @@ orchestrator call — the defaults are for manual testing only.
 | `pg_app_db_user`           | App user created                                          | `appuser`             |
 | `pg_app_db_password`       | App user password — **must** be overridden, never left default | (from Vault) |
 | `pg_app_user_can_create_db`| Whether the app user gets `CREATEDB` (extra databases on this instance) | `false` |
+| `pg_app_user_superuser`    | **Dangerous** — grants real Postgres `SUPERUSER`. Default `false`, only enable per-customer on documented request | `false` |
 | `target_ip`                | (top-level playbook, not the role) IP of the target VM — built into an in-memory inventory group via `add_host`, never a persisted AWX host | `10.0.5.50` |
 
 ## Access model for the customer's user
@@ -53,6 +54,23 @@ can reliably reason about.
 
 Additional roles/users beyond `pg_app_db_user` are handled by support on
 request, not self-service — `pg_app_db_user` has `NOCREATEROLE`.
+
+### Granting superuser (`pg_app_user_superuser: true`)
+
+An explicit escape hatch exists for the rare case a customer genuinely
+needs real Postgres superuser (e.g. an extension that requires it). It's
+off by default and should stay off unless there's a specific, documented
+reason for a specific deployment:
+
+- Bypasses every permission check, including anything discussed above.
+- Enables OS-level command execution via `COPY ... PROGRAM`.
+- Implicitly also grants `CREATEDB` (superuser always can, regardless of
+  `pg_app_user_can_create_db`).
+- The playbook prints a loud warning in the job output whenever this is
+  enabled, so it shows up clearly in AWX job history / logs.
+
+Treat turning this on as a decision worth a second person's sign-off,
+not just a Survey field someone filled in.
 
 ## What it does, in order
 

@@ -13,6 +13,10 @@
 # objects to any additional users they create -- WITHOUT the real
 # Postgres SUPERUSER attribute, which would let them touch the OS,
 # other databases, or server-wide config. See README for the reasoning.
+#
+# pg_app_user_superuser is a separate, explicit override for the rare
+# case a customer genuinely needs superuser -- default is false, and it
+# should stay that way unless there's a specific documented reason.
 
 - name: Guard against pg_app_db_user being set to the postgres superuser
   ansible.builtin.assert:
@@ -23,11 +27,21 @@
       and Postgres will refuse to strip its SUPERUSER attribute. Set
       pg_app_db_user to a distinct application username instead.
 
+- name: Warn loudly when superuser is being granted
+  ansible.builtin.debug:
+    msg:
+      - "*** WARNING: pg_app_user_superuser is TRUE ***"
+      - "{{ pg_app_db_user }} will be granted real Postgres SUPERUSER on this instance."
+      - "This bypasses all permission checks and enables OS-level command"
+      - "execution via COPY ... PROGRAM. Confirm this was an intentional,"
+      - "documented decision for this specific deployment."
+  when: pg_app_user_superuser | bool
+
 - name: Ensure application user exists with the supplied password
   community.postgresql.postgresql_user:
     name: "{{ pg_app_db_user }}"
     password: "{{ pg_app_db_password }}"
-    role_attr_flags: "NOSUPERUSER,{{ 'CREATEDB' if (pg_app_user_can_create_db | bool) else 'NOCREATEDB' }},NOCREATEROLE"
+    role_attr_flags: "{{ 'SUPERUSER' if (pg_app_user_superuser | bool) else 'NOSUPERUSER' }},{{ 'CREATEDB' if (pg_app_user_can_create_db | bool or pg_app_user_superuser | bool) else 'NOCREATEDB' }},NOCREATEROLE"
     state: present
   become: true
   become_user: postgres
@@ -63,3 +77,4 @@
       - "Listening on {{ pg_listen_addresses }}:{{ pg_port }}"
       - "Database: {{ pg_app_db_name }}  |  Owner/admin user: {{ pg_app_db_user }}"
       - "Data directory: {{ pg_data_mount_point if (pg_use_separate_data_disk | bool) else pg_data_dir_default }}"
+      - "{{ (pg_app_db_user + ' has real Postgres SUPERUSER on this instance.') if (pg_app_user_superuser | bool) else (pg_app_db_user + ' is a non-superuser owner of ' + pg_app_db_name + ' (no cluster-wide privileges).') }}"
